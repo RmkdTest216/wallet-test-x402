@@ -1,0 +1,22 @@
+{
+  "name": "wallet-test-x402",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "QA matrix-test endpoint — exercises Wallet Test PoS Payment Settings via x402",
+  "scripts": {
+    "dev": "tsx server.ts",
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "@1stdigital/prism-express": "latest",
+    "dotenv": "^16.4.7",
+    "express": "^4.18.2",
+    "tsx": "^4.20.4"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.13.4",
+    "typescript": "^5.9.2"
+  }
+}
