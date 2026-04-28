@@ -275,13 +275,19 @@ function makeMatrixHandler(currency: string) {
 
     if (xPayment) {
       // Phase 2 — verify + settle
+      let rawDecoded: any = null;
       try {
         const decoded = Buffer.from(xPayment, "base64").toString("utf-8");
-        const paymentPayload = JSON.parse(decoded);
-        console.log("[/matrix] Phase 2 — paymentPayload keys:", Object.keys(paymentPayload));
-        console.log("[/matrix] paymentPayload preview:", JSON.stringify(paymentPayload).slice(0, 400));
+        rawDecoded = JSON.parse(decoded);
+        let paymentPayload: any = rawDecoded;
+
+        // The CLI may wrap the payload as { x402Version, paymentPayload, paymentRequirements }.
+        // Unwrap if so.
+        if (paymentPayload?.paymentPayload && !paymentPayload?.accepted) {
+          paymentPayload = paymentPayload.paymentPayload;
+        }
+
         const result = await settleMatrixPayment(paymentPayload);
-        console.log("[/matrix] settle result:", JSON.stringify(result));
         if (result.success) {
           const responseHeader = Buffer.from(JSON.stringify(result)).toString("base64");
           res.setHeader("X-PAYMENT-RESPONSE", responseHeader);
@@ -300,12 +306,14 @@ function makeMatrixHandler(currency: string) {
             error: "settlement_failed",
             detail: result.error,
             debug: {
-              payloadKeys: Object.keys(paymentPayload || {}),
-              payloadScheme: paymentPayload?.scheme,
-              payloadNetwork: paymentPayload?.network,
+              rawDecodedTopKeys: Object.keys(rawDecoded || {}),
+              rawDecodedPreview: JSON.stringify(rawDecoded).slice(0, 500),
+              afterUnwrapKeys: Object.keys(paymentPayload || {}),
+              hasAccepted: !!paymentPayload?.accepted,
+              acceptedScheme: paymentPayload?.accepted?.scheme,
+              acceptedNetwork: paymentPayload?.accepted?.network,
+              acceptedAsset: paymentPayload?.accepted?.asset,
               x402Version: paymentPayload?.x402Version,
-              currency,
-              amount,
             },
           });
         }
@@ -313,6 +321,10 @@ function makeMatrixHandler(currency: string) {
         res.status(400).json({
           error: "invalid_x_payment_header",
           detail: String(err),
+          debug: {
+            rawDecodedTopKeys: Object.keys(rawDecoded || {}),
+            rawDecodedPreview: JSON.stringify(rawDecoded).slice(0, 500),
+          },
         });
       }
       return;
