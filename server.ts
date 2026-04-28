@@ -224,43 +224,19 @@ function tryJson(s: string): unknown {
  */
 async function settleMatrixPayment(
   paymentPayload: any,
-  currency: string,
-  amount: string,
-  resourceUrl: string,
 ): Promise<{ success: boolean; transaction?: string; payer?: string; network?: string; error?: string }> {
-  // 1. Re-fetch current requirements
-  const prepareRes = await fetch(`${prismBaseUrl}/api/v2/merchant/checkout-prepare`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-API-Key": prismApiKey },
-    body: JSON.stringify({
-      amount,
-      currency: currency.toUpperCase(),
-      resource: { url: resourceUrl, description: `wallet-test-x402 matrix settle (${currency.toUpperCase()})` },
-    }),
-  });
-  if (!prepareRes.ok) {
-    return { success: false, error: `prepare failed: ${prepareRes.status} ${await prepareRes.text().catch(() => "")}` };
-  }
-  const prepareData = (await prepareRes.json()) as any;
-  const accepts = prepareData?.["xyz.fd.prism_payment"]?.[0]?.config?.accepts ?? [];
-
-  // 2. Match payload → accept entry by scheme + network
-  const matched = accepts.find((a: any) =>
-    a.scheme === paymentPayload?.scheme &&
-    a.network === paymentPayload?.network
-  );
-  if (!matched) {
-    return {
-      success: false,
-      error: `no matching requirement for scheme=${paymentPayload?.scheme} network=${paymentPayload?.network}`,
-    };
+  // x402 v2 PaymentPayload includes `accepted` — the requirement the customer chose.
+  // We pass it directly to verify/settle (gateway will validate it server-side).
+  const paymentRequirements = paymentPayload?.accepted;
+  if (!paymentRequirements) {
+    return { success: false, error: "paymentPayload.accepted is missing (expected x402 v2 structure)" };
   }
 
-  // 3. Verify
+  // 1. Verify the customer's signed authorization
   const verifyRes = await fetch(`${prismBaseUrl}/api/v2/payment/verify`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": prismApiKey },
-    body: JSON.stringify({ paymentPayload, paymentRequirements: matched }),
+    body: JSON.stringify({ paymentPayload, paymentRequirements }),
   });
   if (!verifyRes.ok) {
     return { success: false, error: `verify HTTP ${verifyRes.status}: ${await verifyRes.text().catch(() => "")}` };
@@ -270,11 +246,11 @@ async function settleMatrixPayment(
     return { success: false, error: `verify rejected: ${verifyData?.error ?? "unknown"}` };
   }
 
-  // 4. Settle (facilitator + on-chain)
+  // 2. Settle on-chain via facilitator
   const settleRes = await fetch(`${prismBaseUrl}/api/v2/payment/settle`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-API-Key": prismApiKey },
-    body: JSON.stringify({ paymentPayload, paymentRequirements: matched }),
+    body: JSON.stringify({ paymentPayload, paymentRequirements }),
   });
   if (!settleRes.ok) {
     return { success: false, error: `settle HTTP ${settleRes.status}: ${await settleRes.text().catch(() => "")}` };
@@ -304,7 +280,7 @@ function makeMatrixHandler(currency: string) {
         const paymentPayload = JSON.parse(decoded);
         console.log("[/matrix] Phase 2 — paymentPayload keys:", Object.keys(paymentPayload));
         console.log("[/matrix] paymentPayload preview:", JSON.stringify(paymentPayload).slice(0, 400));
-        const result = await settleMatrixPayment(paymentPayload, currency, amount, req.url);
+        const result = await settleMatrixPayment(paymentPayload);
         console.log("[/matrix] settle result:", JSON.stringify(result));
         if (result.success) {
           const responseHeader = Buffer.from(JSON.stringify(result)).toString("base64");
