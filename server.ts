@@ -339,10 +339,19 @@ function makeMatrixHandler(currency: string) {
 
     // Phase 1 — return 402 challenge with FX-aware accepts
     // Use the absolute URL so the CLI can match resource.url to the request it made.
+    // Also set Payment-Required / X-Payment-Requirements headers (base64-encoded clean
+    // challenge) because the FDX CLI reads payment requirements from headers, not body.
     try {
-      const challenge = await buildMatrixChallenge(absoluteUrl(req), currency, amount);
-      res.status(402).setHeader("Content-Type", "application/json");
-      res.json(challenge);
+      const challenge = await buildMatrixChallenge(absoluteUrl(req), currency, amount) as Record<string, unknown>;
+      // Strip _meta for the header — must be spec-compliant x402 JSON for the CLI
+      const { _meta: _stripped, ...cleanChallenge } = challenge;
+      const encodedChallenge = Buffer.from(JSON.stringify(cleanChallenge)).toString("base64");
+      res
+        .status(402)
+        .setHeader("Content-Type", "application/json")
+        .setHeader("Payment-Required", encodedChallenge)
+        .setHeader("X-Payment-Requirements", encodedChallenge);
+      res.json(challenge); // body keeps _meta for human curl debugging
     } catch (err) {
       res.status(503).json({
         error: "matrix_challenge_failed",
@@ -362,8 +371,15 @@ app.get("/debug-payment", async (req: Request, res: Response) => {
 
   if (!xPayment) {
     try {
-      const challenge = await buildMatrixChallenge(absoluteUrl(req), "USD", "0.01");
-      return void res.status(402).json(challenge);
+      const challenge = await buildMatrixChallenge(absoluteUrl(req), "USD", "0.01") as Record<string, unknown>;
+      const { _meta: _stripped, ...cleanChallenge } = challenge;
+      const encodedChallenge = Buffer.from(JSON.stringify(cleanChallenge)).toString("base64");
+      return void res
+        .status(402)
+        .setHeader("Content-Type", "application/json")
+        .setHeader("Payment-Required", encodedChallenge)
+        .setHeader("X-Payment-Requirements", encodedChallenge)
+        .json(challenge);
     } catch (err) {
       return void res.status(503).json({ error: String(err) });
     }
