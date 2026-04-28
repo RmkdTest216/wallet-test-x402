@@ -115,7 +115,7 @@ app.get("/health", (_req, res) => {
 
 const fdxTestGuard = prismPaymentMiddleware(
   { apiKey: prismApiKey, baseUrl: prismBaseUrl },
-  { "/fdx-test": { price: 1.00, description: "QA Test Endpoint — full E2E paid route" } },
+  { "/fdx-test": { price: 0.10, description: "QA Test Endpoint — full E2E paid route" } },
 );
 
 app.get("/fdx-test", fdxTestGuard, (_req: Request, res: Response) => {
@@ -123,7 +123,7 @@ app.get("/fdx-test", fdxTestGuard, (_req: Request, res: Response) => {
     success: true,
     message: "Payment verified — welcome to wallet-test-x402",
     route: "/fdx-test",
-    pricing: { amount: "1.00", currency: "USD" },
+    pricing: { amount: "0.10", currency: "USD" },
     payer: res.locals["payer"],
     timestamp: new Date().toISOString(),
   });
