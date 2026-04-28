@@ -123,7 +123,7 @@ app.get("/fdx-test", fdxTestGuard, (_req: Request, res: Response) => {
     success: true,
     message: "Payment verified — welcome to wallet-test-x402",
     route: "/fdx-test",
-    pricing: { amount: "0.02", currency: "USD" },
+    pricing: { amount: "1.00", currency: "USD" },
     payer: res.locals["payer"],
     timestamp: new Date().toISOString(),
   });
