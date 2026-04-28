@@ -115,7 +115,7 @@ app.get("/health", (_req, res) => {
 
 const fdxTestGuard = prismPaymentMiddleware(
   { apiKey: prismApiKey, baseUrl: prismBaseUrl },
-  { "/fdx-test": { price: 0.02, description: "QA Test Endpoint — full E2E paid route" } },
+  { "/fdx-test": { price: 1.00, description: "QA Test Endpoint — full E2E paid route" } },
 );
 
 app.get("/fdx-test", fdxTestGuard, (_req: Request, res: Response) => {
