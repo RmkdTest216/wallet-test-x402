@@ -84,9 +84,9 @@ app.get("/", (_req, res: Response) => {
   <tr><th>Endpoint</th><th>Description</th><th>Type</th></tr>
   <tr><td>GET /health</td><td>Server health</td><td><span class="badge free">FREE</span></td></tr>
   <tr><td>GET /fdx-test</td><td>Full E2E paid endpoint ($0.02 USD via SDK)</td><td><span class="badge paid">PAID E2E</span></td></tr>
-  <tr><td>GET /usd</td><td>402 challenge for USD ($1.00 default; override with ?amount=N) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
-  <tr><td>GET /eur</td><td>402 challenge for EUR ($1.00 default; override with ?amount=N) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
-  <tr><td>GET /hkd</td><td>402 challenge for HKD ($1.00 default; override with ?amount=N) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
+  <tr><td>GET /usd</td><td>FX-aware paid endpoint, USD ($1.00 default; override with ?amount=N). Full E2E via direct prism-gw checkout-prepare + verify + settle.</td><td><span class="badge paid">PAID E2E</span></td></tr>
+  <tr><td>GET /eur</td><td>FX-aware paid endpoint, EUR ($1.00 default; override with ?amount=N).</td><td><span class="badge paid">PAID E2E</span></td></tr>
+  <tr><td>GET /hkd</td><td>FX-aware paid endpoint, HKD ($1.00 default; override with ?amount=N).</td><td><span class="badge paid">PAID E2E</span></td></tr>
 </table>
 <footer>The matrix routes call <code>checkout-prepare</code> directly so they reflect the current Cross-currency + FX-buffer settings on the Wallet Test PoS.</footer>
 </body></html>`);
@@ -213,12 +213,126 @@ function tryJson(s: string): unknown {
   }
 }
 
+/**
+ * Phase 2 — verify + settle the customer's signed authorization via prism-gw.
+ *
+ * Flow:
+ *   1. Re-fetch current requirements (so we have an authoritative accept list)
+ *   2. Match the customer's payload (by scheme + network) to one of those accepts
+ *   3. Call POST /api/v2/payment/verify with {paymentPayload, paymentRequirements}
+ *   4. If valid, call POST /api/v2/payment/settle to push to facilitator + on-chain settle
+ */
+async function settleMatrixPayment(
+  paymentPayload: any,
+  currency: string,
+  amount: string,
+  resourceUrl: string,
+): Promise<{ success: boolean; transaction?: string; payer?: string; network?: string; error?: string }> {
+  // 1. Re-fetch current requirements
+  const prepareRes = await fetch(`${prismBaseUrl}/api/v2/merchant/checkout-prepare`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": prismApiKey },
+    body: JSON.stringify({
+      amount,
+      currency: currency.toUpperCase(),
+      resource: { url: resourceUrl, description: `wallet-test-x402 matrix settle (${currency.toUpperCase()})` },
+    }),
+  });
+  if (!prepareRes.ok) {
+    return { success: false, error: `prepare failed: ${prepareRes.status} ${await prepareRes.text().catch(() => "")}` };
+  }
+  const prepareData = (await prepareRes.json()) as any;
+  const accepts = prepareData?.["xyz.fd.prism_payment"]?.[0]?.config?.accepts ?? [];
+
+  // 2. Match payload → accept entry by scheme + network
+  const matched = accepts.find((a: any) =>
+    a.scheme === paymentPayload?.scheme &&
+    a.network === paymentPayload?.network
+  );
+  if (!matched) {
+    return {
+      success: false,
+      error: `no matching requirement for scheme=${paymentPayload?.scheme} network=${paymentPayload?.network}`,
+    };
+  }
+
+  // 3. Verify
+  const verifyRes = await fetch(`${prismBaseUrl}/api/v2/payment/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": prismApiKey },
+    body: JSON.stringify({ paymentPayload, paymentRequirements: matched }),
+  });
+  if (!verifyRes.ok) {
+    return { success: false, error: `verify HTTP ${verifyRes.status}: ${await verifyRes.text().catch(() => "")}` };
+  }
+  const verifyData = (await verifyRes.json()) as any;
+  if (!verifyData?.isValid) {
+    return { success: false, error: `verify rejected: ${verifyData?.error ?? "unknown"}` };
+  }
+
+  // 4. Settle (facilitator + on-chain)
+  const settleRes = await fetch(`${prismBaseUrl}/api/v2/payment/settle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-API-Key": prismApiKey },
+    body: JSON.stringify({ paymentPayload, paymentRequirements: matched }),
+  });
+  if (!settleRes.ok) {
+    return { success: false, error: `settle HTTP ${settleRes.status}: ${await settleRes.text().catch(() => "")}` };
+  }
+  const settleData = (await settleRes.json()) as any;
+  return {
+    success: settleData?.success ?? false,
+    transaction: settleData?.transaction,
+    payer: settleData?.payer,
+    network: settleData?.network,
+    error: settleData?.errorReason,
+  };
+}
+
 function makeMatrixHandler(currency: string) {
   return async (req: Request, res: Response) => {
+    // Optional ?amount=N override (e.g. /usd?amount=10). Defaults to "1.00".
+    const amountQ = (req.query["amount"] as string | undefined)?.trim();
+    const amount = amountQ && /^[0-9]+(\.[0-9]+)?$/.test(amountQ) ? amountQ : "1.00";
+
+    const xPayment = (req.headers["x-payment"] as string | undefined)?.trim();
+
+    if (xPayment) {
+      // Phase 2 — verify + settle
+      try {
+        const decoded = Buffer.from(xPayment, "base64").toString("utf-8");
+        const paymentPayload = JSON.parse(decoded);
+        const result = await settleMatrixPayment(paymentPayload, currency, amount, req.url);
+        if (result.success) {
+          const responseHeader = Buffer.from(JSON.stringify(result)).toString("base64");
+          res.setHeader("X-PAYMENT-RESPONSE", responseHeader);
+          res.json({
+            success: true,
+            message: `Payment verified — ${currency.toUpperCase()} matrix route (FX-aware)`,
+            route: req.path,
+            pricing: { amount, currency: currency.toUpperCase() },
+            payer: result.payer,
+            transaction: result.transaction,
+            network: result.network,
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          res.status(402).json({
+            error: "settlement_failed",
+            detail: result.error,
+          });
+        }
+      } catch (err) {
+        res.status(400).json({
+          error: "invalid_x_payment_header",
+          detail: String(err),
+        });
+      }
+      return;
+    }
+
+    // Phase 1 — return 402 challenge with FX-aware accepts
     try {
-      // Optional ?amount=N override (e.g. /usd?amount=10). Defaults to "1.00".
-      const amountQ = (req.query["amount"] as string | undefined)?.trim();
-      const amount = amountQ && /^[0-9]+(\.[0-9]+)?$/.test(amountQ) ? amountQ : "1.00";
       const challenge = await buildMatrixChallenge(req.url, currency, amount);
       res.status(402).setHeader("Content-Type", "application/json");
       res.json(challenge);
