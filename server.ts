@@ -302,7 +302,10 @@ function makeMatrixHandler(currency: string) {
       try {
         const decoded = Buffer.from(xPayment, "base64").toString("utf-8");
         const paymentPayload = JSON.parse(decoded);
+        console.log("[/matrix] Phase 2 — paymentPayload keys:", Object.keys(paymentPayload));
+        console.log("[/matrix] paymentPayload preview:", JSON.stringify(paymentPayload).slice(0, 400));
         const result = await settleMatrixPayment(paymentPayload, currency, amount, req.url);
+        console.log("[/matrix] settle result:", JSON.stringify(result));
         if (result.success) {
           const responseHeader = Buffer.from(JSON.stringify(result)).toString("base64");
           res.setHeader("X-PAYMENT-RESPONSE", responseHeader);
@@ -320,6 +323,14 @@ function makeMatrixHandler(currency: string) {
           res.status(402).json({
             error: "settlement_failed",
             detail: result.error,
+            debug: {
+              payloadKeys: Object.keys(paymentPayload || {}),
+              payloadScheme: paymentPayload?.scheme,
+              payloadNetwork: paymentPayload?.network,
+              x402Version: paymentPayload?.x402Version,
+              currency,
+              amount,
+            },
           });
         }
       } catch (err) {
