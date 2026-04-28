@@ -87,6 +87,7 @@ app.get("/", (_req, res: Response) => {
   <tr><td>GET /usd</td><td>FX-aware paid endpoint, USD ($1.00 default; override with ?amount=N). Full E2E via direct prism-gw checkout-prepare + verify + settle.</td><td><span class="badge paid">PAID E2E</span></td></tr>
   <tr><td>GET /eur</td><td>FX-aware paid endpoint, EUR ($1.00 default; override with ?amount=N).</td><td><span class="badge paid">PAID E2E</span></td></tr>
   <tr><td>GET /hkd</td><td>FX-aware paid endpoint, HKD ($1.00 default; override with ?amount=N).</td><td><span class="badge paid">PAID E2E</span></td></tr>
+  <tr><td>GET /inr</td><td>FX-aware paid endpoint, INR ($1.00 default; override with ?amount=N).</td><td><span class="badge paid">PAID E2E</span></td></tr>
 </table>
 <footer>The matrix routes call <code>checkout-prepare</code> directly so they reflect the current Cross-currency + FX-buffer settings on the Wallet Test PoS.</footer>
 </body></html>`);
@@ -107,6 +108,7 @@ app.get("/health", (_req, res) => {
       "GET /usd          — Phase-1-only 402 challenge for USD ($1.00 default; override with ?amount=N)",
       "GET /eur          — Phase-1-only 402 challenge for EUR ($1.00 default; override with ?amount=N)",
       "GET /hkd          — Phase-1-only 402 challenge for HKD ($1.00 default; override with ?amount=N)",
+      "GET /inr          — Phase-1-only 402 challenge for INR ($1.00 default; override with ?amount=N)",
     ],
   });
 });
@@ -411,6 +413,7 @@ app.get("/debug-payment", async (req: Request, res: Response) => {
 app.get("/usd", makeMatrixHandler("USD"));
 app.get("/eur", makeMatrixHandler("EUR"));
 app.get("/hkd", makeMatrixHandler("HKD"));
+app.get("/inr", makeMatrixHandler("INR"));
 
 // -- Error handler ------------------------------------------------------------
 
