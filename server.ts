@@ -265,6 +265,13 @@ async function settleMatrixPayment(
   };
 }
 
+/** Build the absolute URL for the current request (Vercel-proxy-aware). */
+function absoluteUrl(req: Request): string {
+  const proto = (req.headers["x-forwarded-proto"] as string | undefined) ?? req.protocol ?? "https";
+  const host = (req.headers["x-forwarded-host"] as string | undefined) ?? req.get("host") ?? "localhost";
+  return `${proto}://${host}${req.url}`;
+}
+
 function makeMatrixHandler(currency: string) {
   return async (req: Request, res: Response) => {
     // Optional ?amount=N override (e.g. /usd?amount=10). Defaults to "1.00".
@@ -331,8 +338,9 @@ function makeMatrixHandler(currency: string) {
     }
 
     // Phase 1 — return 402 challenge with FX-aware accepts
+    // Use the absolute URL so the CLI can match resource.url to the request it made.
     try {
-      const challenge = await buildMatrixChallenge(req.url, currency, amount);
+      const challenge = await buildMatrixChallenge(absoluteUrl(req), currency, amount);
       res.status(402).setHeader("Content-Type", "application/json");
       res.json(challenge);
     } catch (err) {
@@ -343,6 +351,46 @@ function makeMatrixHandler(currency: string) {
     }
   };
 }
+
+// -- /debug-payment — decode X-PAYMENT without settling (diagnostic only) ------
+// Phase 1: returns a real 402 challenge (USD $0.01) so the CLI can sign it.
+// Phase 2: decodes the X-PAYMENT header and returns the raw structure as 200 JSON
+//          WITHOUT calling verify/settle — lets us see exactly what the CLI sends.
+
+app.get("/debug-payment", async (req: Request, res: Response) => {
+  const xPayment = (req.headers["x-payment"] as string | undefined)?.trim();
+
+  if (!xPayment) {
+    try {
+      const challenge = await buildMatrixChallenge(absoluteUrl(req), "USD", "0.01");
+      return void res.status(402).json(challenge);
+    } catch (err) {
+      return void res.status(503).json({ error: String(err) });
+    }
+  }
+
+  try {
+    const decoded = Buffer.from(xPayment, "base64").toString("utf-8");
+    const rawDecoded = JSON.parse(decoded);
+    let unwrapped: any = rawDecoded;
+    if (unwrapped?.paymentPayload && !unwrapped?.accepted) {
+      unwrapped = unwrapped.paymentPayload;
+    }
+    return void res.json({
+      _debug: true,
+      rawTopKeys: Object.keys(rawDecoded),
+      rawDecoded,
+      unwrappedTopKeys: Object.keys(unwrapped),
+      unwrapped,
+      hasAccepted: !!unwrapped?.accepted,
+      acceptedNetwork: unwrapped?.accepted?.network,
+      acceptedAsset: unwrapped?.accepted?.asset,
+      resourceUrl: unwrapped?.resource?.url,
+    });
+  } catch (err) {
+    return void res.status(400).json({ error: "decode_failed", detail: String(err) });
+  }
+});
 
 app.get("/usd", makeMatrixHandler("USD"));
 app.get("/eur", makeMatrixHandler("EUR"));
