@@ -84,9 +84,9 @@ app.get("/", (_req, res: Response) => {
   <tr><th>Endpoint</th><th>Description</th><th>Type</th></tr>
   <tr><td>GET /health</td><td>Server health</td><td><span class="badge free">FREE</span></td></tr>
   <tr><td>GET /fdx-test</td><td>Full E2E paid endpoint ($0.02 USD via SDK)</td><td><span class="badge paid">PAID E2E</span></td></tr>
-  <tr><td>GET /usd</td><td>402 challenge for USD ($5.00) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
-  <tr><td>GET /eur</td><td>402 challenge for EUR ($5.00) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
-  <tr><td>GET /hkd</td><td>402 challenge for HKD ($5.00) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
+  <tr><td>GET /usd</td><td>402 challenge for USD ($1.00 default; override with ?amount=N) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
+  <tr><td>GET /eur</td><td>402 challenge for EUR ($1.00 default; override with ?amount=N) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
+  <tr><td>GET /hkd</td><td>402 challenge for HKD ($1.00 default; override with ?amount=N) from prism-gw</td><td><span class="badge matrix">MATRIX</span></td></tr>
 </table>
 <footer>The matrix routes call <code>checkout-prepare</code> directly so they reflect the current Cross-currency + FX-buffer settings on the Wallet Test PoS.</footer>
 </body></html>`);
@@ -104,9 +104,9 @@ app.get("/health", (_req, res) => {
       "GET /             — landing",
       "GET /health       — this",
       "GET /fdx-test     — paid via SDK ($0.02 USD)",
-      "GET /usd          — Phase-1-only 402 challenge for USD ($5.00)",
-      "GET /eur          — Phase-1-only 402 challenge for EUR ($5.00)",
-      "GET /hkd          — Phase-1-only 402 challenge for HKD ($5.00)",
+      "GET /usd          — Phase-1-only 402 challenge for USD ($1.00 default; override with ?amount=N)",
+      "GET /eur          — Phase-1-only 402 challenge for EUR ($1.00 default; override with ?amount=N)",
+      "GET /hkd          — Phase-1-only 402 challenge for HKD ($1.00 default; override with ?amount=N)",
     ],
   });
 });
@@ -134,7 +134,7 @@ app.get("/fdx-test", fdxTestGuard, (_req: Request, res: Response) => {
 async function buildMatrixChallenge(
   resourceUrl: string,
   currency: string,
-  amount: string = "5.00",
+  amount: string = "1.00",
 ): Promise<unknown> {
   if (!prismApiKey) {
     throw new Error("PRISM_API_KEY is not configured");
@@ -216,7 +216,10 @@ function tryJson(s: string): unknown {
 function makeMatrixHandler(currency: string) {
   return async (req: Request, res: Response) => {
     try {
-      const challenge = await buildMatrixChallenge(req.url, currency);
+      // Optional ?amount=N override (e.g. /usd?amount=10). Defaults to "1.00".
+      const amountQ = (req.query["amount"] as string | undefined)?.trim();
+      const amount = amountQ && /^[0-9]+(\.[0-9]+)?$/.test(amountQ) ? amountQ : "1.00";
+      const challenge = await buildMatrixChallenge(req.url, currency, amount);
       res.status(402).setHeader("Content-Type", "application/json");
       res.json(challenge);
     } catch (err) {
