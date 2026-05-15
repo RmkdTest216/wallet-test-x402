@@ -238,7 +238,16 @@ async function buildMatrixChallenge(
   const data = (await res.json()) as Record<string, unknown>;
   const PRISM_NAMESPACE = "xyz.fd.prism_payment";
   const handlers = (data[PRISM_NAMESPACE] ?? Object.values(data)[0]) as
-    | Array<{ id?: string; version?: string; config?: { x402Version?: number; resource?: object; accepts?: unknown[] } }>
+    | Array<{
+        id?: string;
+        version?: string;
+        config?: {
+          x402Version?: number;
+          resource?: object;
+          accepts?: unknown[];
+          promotions?: Array<{ type?: string; token?: string; basisPoints?: number; message?: string }>;
+        };
+      }>
     | undefined;
 
   const handler = handlers?.[0];
@@ -253,6 +262,21 @@ async function buildMatrixChallenge(
     };
   }
 
+  // Map promotions (e.g. cashback) from checkout-prepare into x402 extensions.
+  // The SDK path on /fdx-test does this automatically; the FX-aware path here did not
+  // (was hardcoded to null), so cashback-enrolled projects lost the promotion signal.
+  const promotions = handler.config.promotions ?? [];
+  const cashback = promotions.find((p) => p?.type === "cashback");
+  const extensions = cashback
+    ? {
+        "prism:cashback": {
+          token: cashback.token,
+          basisPoints: cashback.basisPoints,
+          message: cashback.message,
+        },
+      }
+    : null;
+
   return {
     x402Version: handler.config.x402Version ?? 2,
     error: "Payment required to access this resource",
@@ -262,7 +286,7 @@ async function buildMatrixChallenge(
       mimeType: "application/json",
     },
     accepts: handler.config.accepts,
-    extensions: null,
+    extensions,
     /* test instrumentation */
     _meta: {
       env: env.label,
@@ -271,6 +295,7 @@ async function buildMatrixChallenge(
       gateway: env.baseUrl,
       handlerId: handler.id,
       handlerVersion: handler.version,
+      promotionCount: promotions.length,
     },
   };
 }
